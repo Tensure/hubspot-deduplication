@@ -1,0 +1,9 @@
+
+
+# HubSpot config file
+hubspot.config.yml
+.env
+node_modules/
+*.xlsx
+lastRun.json
+*.log
