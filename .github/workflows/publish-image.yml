@@ -1,0 +1,86 @@
+name: Publish Container Image
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish-image-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GAR_REGISTRY: us-east1-docker.pkg.dev
+  GAR_REPOSITORY_PATH: tensure-shared-535f/tensure-docker-repo
+  IMAGE_NAME: ${{ vars.IMAGE_NAME }}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate GAR settings
+        run: |
+          set -euo pipefail
+          for value in GAR_REGISTRY GAR_REPOSITORY_PATH IMAGE_NAME; do
+            if [[ -z "${!value}" ]]; then
+              echo "Missing required workflow setting: $value" >&2
+              exit 1
+            fi
+          done
+
+      - name: Verify tag is on main
+        run: |
+          set -euo pipefail
+          git fetch origin main --depth=1
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Configure Docker to use gcloud credentials
+        run: |
+          gcloud auth configure-docker "${GAR_REGISTRY}" --quiet
+
+      - name: Set release tags
+        id: release
+        run: |
+          set -euo pipefail
+          echo "repository=${GAR_REGISTRY}/${GAR_REPOSITORY_PATH}/${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          echo "semver=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          echo "sha_short=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ steps.release.outputs.repository }}:${{ steps.release.outputs.tag }}
+            ${{ steps.release.outputs.repository }}:${{ steps.release.outputs.semver }}
+            ${{ steps.release.outputs.repository }}:sha-${{ steps.release.outputs.sha_short }}
+            ${{ steps.release.outputs.repository }}:latest
+          cache-from: type=registry,ref=${{ steps.release.outputs.repository }}:latest
+          cache-to: type=inline
+          provenance: mode=max
+          sbom: true

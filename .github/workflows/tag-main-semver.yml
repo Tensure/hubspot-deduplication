@@ -1,0 +1,79 @@
+name: Tag Main With SemVer
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Semantic version increment to apply to main
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tag-main-semver
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Compute next semantic version
+        id: next
+        run: |
+          set -euo pipefail
+
+          latest_tag=$(git tag --list 'v*.*.*' --sort=-version:refname | head -n 1)
+          if [[ -z "$latest_tag" ]]; then
+            latest_tag="v0.0.0"
+          fi
+
+          version=${latest_tag#v}
+          IFS='.' read -r major minor patch <<< "$version"
+
+          case "${{ inputs.bump }}" in
+            major)
+              major=$((major + 1))
+              minor=0
+              patch=0
+              ;;
+            minor)
+              minor=$((minor + 1))
+              patch=0
+              ;;
+            patch)
+              patch=$((patch + 1))
+              ;;
+          esac
+
+          new_tag="v${major}.${minor}.${patch}"
+
+          if git rev-parse "$new_tag" >/dev/null 2>&1; then
+            echo "Tag $new_tag already exists" >&2
+            exit 1
+          fi
+
+          echo "tag=$new_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        run: |
+          git tag -a "${{ steps.next.outputs.tag }}" -m "Release ${{ steps.next.outputs.tag }}"
+          git push origin "${{ steps.next.outputs.tag }}"
