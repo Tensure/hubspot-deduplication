@@ -26,6 +26,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  GAR_LOCATION: us-east1
   GAR_REGISTRY: us-east1-docker.pkg.dev
   GAR_REPOSITORY_PATH: tensure-shared-535f/tensure-docker-repo
   IMAGE_NAME: hubspot-deduplication
@@ -47,7 +48,7 @@ jobs:
       - name: Validate GAR settings
         run: |
           set -euo pipefail
-          for value in GAR_REGISTRY GAR_REPOSITORY_PATH IMAGE_NAME; do
+          for value in GAR_LOCATION GAR_REGISTRY GAR_REPOSITORY_PATH IMAGE_NAME; do
             if [[ -z "${!value}" ]]; then
               echo "Missing required workflow setting: $value" >&2
               exit 1
@@ -86,6 +87,7 @@ jobs:
           echo "sha_short=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Build and push image
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -99,4 +101,24 @@ jobs:
           cache-from: type=registry,ref=${{ steps.release.outputs.repository }}:latest
           cache-to: type=inline
           provenance: mode=max
-          sbom: true
+
+      - name: Export SBOM from Artifact Registry
+        env:
+          IMAGE_URI: ${{ steps.release.outputs.repository }}@${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+
+          for attempt in {1..10}; do
+            if output=$(gcloud artifacts sbom export --uri="${IMAGE_URI}" --location="${GAR_LOCATION}" 2>&1); then
+              printf '%s\n' "$output"
+              exit 0
+            fi
+
+            if [[ "$attempt" -eq 10 ]]; then
+              printf '%s\n' "$output" >&2
+              exit 1
+            fi
+
+            echo "SBOM export not ready yet for ${IMAGE_URI}; retrying"
+            sleep $((attempt * 15))
+          done
