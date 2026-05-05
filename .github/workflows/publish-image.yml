@@ -16,7 +16,7 @@ concurrency:
 env:
   GAR_REGISTRY: us-east1-docker.pkg.dev
   GAR_REPOSITORY_PATH: tensure-shared-535f/tensure-docker-repo
-  IMAGE_NAME: ${{ vars.IMAGE_NAME }}
+  IMAGE_NAME: hubspot-deduplication
 
 jobs:
   publish:
